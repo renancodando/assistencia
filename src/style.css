@@ -196,7 +196,7 @@ main {
   z-index: 2;
 }
 .ch {
-  min-height: 150vh;
+  min-height: 180vh;
   display: flex;
   align-items: center;
   padding: 6rem var(--pad);
@@ -306,6 +306,7 @@ tbody td {
   font-weight: 420;
 }
 tbody td:nth-child(2) {
+  padding-right: 0.9rem;
   font-weight: 750;
   font-stretch: 110%;
   white-space: nowrap;
@@ -405,6 +406,11 @@ address {
   color: var(--ink-soft);
 }
 
+/* a desmontagem das peças e a remontagem precisam de mais rolagem */
+#precos {
+  min-height: 260vh;
+}
+
 /* --- telas estreitas: aparelho em cima, texto embaixo ------------- */
 @media (max-aspect-ratio: 115/100), (max-width: 760px) {
   .shade {
@@ -412,7 +418,7 @@ address {
   }
   .ch {
     align-items: flex-end;
-    min-height: 170vh;
+    min-height: 190vh;
     padding-bottom: 12vh;
   }
   .ch.hero {

@@ -77,30 +77,36 @@ export function buildBench(scene, { textureSize }) {
   matTop.position.y = 0.001;
   scene.add(matTop);
 
-  /* --- chave de precisão ---------------------------------------- */
-  const driver = new THREE.Group();
+  /* --- chave de precisão ----------------------------------------
+     Origem na ponta, eixo +Y em direção ao cabo: a coreografia só precisa
+     dizer onde a ponta encosta e para onde o cabo aponta. */
   const amber = std({ color: 0xd98a1f, metalness: 1, roughness: 0.38, bumpMap: knurl(), bumpScale: 0.6 });
   const steel = std({ color: 0xc4c8cc, metalness: 1, roughness: 0.22 });
   const dark = std({ color: 0x1a1c1f, metalness: 0.9, roughness: 0.4 });
-  const handle = mesh(new THREE.CylinderGeometry(0.44, 0.44, 6.2, 48), amber);
-  const cap = mesh(new THREE.CylinderGeometry(0.47, 0.47, 0.7, 48), dark);
-  cap.position.y = 3.5;
-  const ring = mesh(new THREE.CylinderGeometry(0.46, 0.46, 0.12, 48), steel);
-  ring.position.y = 3.1;
-  const neck = mesh(new THREE.CylinderGeometry(0.16, 0.44, 1.1, 48), amber.clone());
-  neck.material.bumpMap = null;
-  neck.position.y = -3.65;
-  const shaft = mesh(new THREE.CylinderGeometry(0.1, 0.1, 4.6, 20), steel);
-  shaft.position.y = -6.4;
-  const tip = mesh(new THREE.CylinderGeometry(0.03, 0.1, 0.55, 20), dark);
-  tip.position.y = -8.95;
-  driver.add(handle, cap, ring, neck, shaft, tip);
-  driver.rotation.set(0, 0, PI / 2);
-  const driverWrap = new THREE.Group();
-  driverWrap.add(driver);
-  driverWrap.position.set(19.5, 0.47, 6.5);
-  driverWrap.rotation.y = 1.25;
-  scene.add(driverWrap);
+  const driver = new THREE.Group();
+  const spin = new THREE.Group();
+  driver.add(spin);
+  const seg = (r0, r1, y0, y1, mat, n = 40) => {
+    const m = mesh(new THREE.CylinderGeometry(r1, r0, y1 - y0, n), mat);
+    m.position.y = (y0 + y1) / 2;
+    spin.add(m);
+    return m;
+  };
+  seg(0.03, 0.1, 0, 0.55, dark, 20);
+  seg(0.1, 0.1, 0.55, 5.15, steel, 20);
+  const neckMat = amber.clone();
+  neckMat.bumpMap = null;
+  seg(0.16, 0.44, 5.15, 6.25, neckMat);
+  seg(0.44, 0.44, 6.25, 12.3, amber);
+  seg(0.46, 0.46, 12.3, 12.42, steel);
+  seg(0.47, 0.47, 12.42, 13.1, dark);
+  // marcação a laser: é ela que deixa o giro visível
+  const mark = mesh(new THREE.BoxGeometry(0.02, 1.6, 0.16), std({ color: 0xf2efe6, roughness: 0.6 }), false);
+  mark.position.set(0.445, 9.3, 0);
+  spin.add(mark);
+  scene.add(driver);
+  props.driver = driver;
+  props.driverSpin = spin;
 
   /* --- pinça ----------------------------------------------------- */
   const armShape = new THREE.Shape();
@@ -141,6 +147,46 @@ export function buildBench(scene, { textureSize }) {
     p.rotation.y = r;
     scene.add(p);
   });
+
+  const pickTool = mesh(pickGeo, pickMat);
+  scene.add(pickTool);
+  props.pick = pickTool;
+
+  /* --- caixa da tela nova: é nela que a tela aberta se apoia ----- */
+  {
+    const [c, g] = canvas(512, 512);
+    g.fillStyle = '#b08d5e';
+    g.fillRect(0, 0, 512, 512);
+    const rr = rng(23);
+    for (let i = 0; i < 900; i++) {
+      g.strokeStyle = `rgba(${rr() > 0.5 ? '70,50,25' : '230,205,160'},${0.03 + rr() * 0.05})`;
+      g.beginPath();
+      const y = rr() * 512;
+      g.moveTo(0, y);
+      g.lineTo(512, y + (rr() - 0.5) * 5);
+      g.stroke();
+    }
+    const [lc, lg] = canvas(512, 512);
+    lg.drawImage(c, 0, 0);
+    lg.fillStyle = '#f3f1ea';
+    lg.fillRect(56, 150, 400, 210);
+    lg.fillStyle = '#16181b';
+    lg.font = '700 38px "Archivo Variable", sans-serif';
+    lg.fillText('Tela OLED 6,3"', 80, 210);
+    lg.font = '500 24px "Archivo Variable", sans-serif';
+    lg.fillText('peça nova · lacrada', 80, 252);
+    lg.fillText('GH82-31245A  rev. C', 80, 288);
+    lg.fillRect(80, 306, 250, 30);
+    lg.fillStyle = '#f3f1ea';
+    for (let i = 0; i < 40; i++) lg.fillRect(84 + i * 6.1, 306, 1 + (i * 7) % 4, 30);
+    const kraft = new THREE.CanvasTexture(c), label = new THREE.CanvasTexture(lc);
+    kraft.colorSpace = label.colorSpace = THREE.SRGBColorSpace;
+    const km = std({ map: kraft, roughness: 0.9 }), lm = std({ map: label, roughness: 0.85 });
+    const box = mesh(new THREE.BoxGeometry(3.0, 5.0, 3.3), [km, lm, km, km, km, km]);
+    box.position.set(5.92, 2.5, -5.2);
+    scene.add(box);
+    props.box = box;
+  }
 
   /* --- rolo de fita kapton -------------------------------------- */
   const ringGeo = (r0, r1, h) =>

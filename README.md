@@ -15,6 +15,7 @@ npm run build    # gera dist/ (estático, hospeda em qualquer lugar)
 - Textos, preços, endereço e horários: `index.html`
 - Número do WhatsApp: `src/ui.js` (`WHATSAPP`) e o link `tel:` em `index.html`
 - Nome serigrafado na manta e textos da tela do aparelho: `src/textures.js`
-- Roteiro da animação (posição de cada peça e da câmera por capítulo): `SCRIPT` em `src/main.js`
+- Coreografia do conserto (parafusos, chave, dobradiça da tela, cabos, peças): `src/choreo.js`
+- Trilha da câmera por capítulo: `CAM` em `src/main.js`
 
 Nome, preços, endereço e telefone atuais são fictícios.

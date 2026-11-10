@@ -62,6 +62,117 @@ function mesh(geo, mat, { cast = true, receive = true } = {}) {
 
 const std = (o) => new THREE.MeshStandardMaterial(o);
 
+// Cabo flexível: uma fita que liga a tela à placa. O comprimento é fixo — quando as
+// pontas se aproximam o cabo faz barriga, quando se afastam ele estica. A curva vive
+// no plano XY local da tela (a tela gira em torno de Z, então a largura fica em Z).
+export class Flex {
+  constructor(parent, { z, width = 0.34, length = 2.15, bx = 2.5, material, headMat, pinMat }) {
+    this.L = length;
+    this.z = z;
+    this.B = new THREE.Vector2(bx, -0.004);
+    this.E = new THREE.Vector2();
+    this.tE = new THREE.Vector2(1, 0);
+    this.N = 28;
+    const n = this.N + 1;
+    this.pos = new Float32Array(n * 2 * 3);
+    this.nor = new Float32Array(n * 2 * 3);
+    const idx = [];
+    for (let i = 0; i < this.N; i++) {
+      const a = i * 2;
+      idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(this.nor, 3));
+    geo.setIndex(idx);
+    this.half = width / 2;
+    this.mesh = new THREE.Mesh(geo, material);
+    this.mesh.frustumCulled = false;
+    this.mesh.castShadow = true;
+    this.mesh.receiveShadow = true;
+    // cabeça do conector (encaixe de pressão)
+    this.head = new THREE.Group();
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.05, width + 0.08), headMat);
+    plate.castShadow = true;
+    const pins = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.03, width - 0.04), pinMat);
+    pins.position.y = -0.035;
+    this.head.add(plate, pins);
+    parent.add(this.mesh, this.head);
+    this._p = [new THREE.Vector2(), new THREE.Vector2(), new THREE.Vector2(), new THREE.Vector2()];
+  }
+
+  _point(t, out) {
+    const [a, b, c, d] = this._p, u = 1 - t;
+    const w0 = u * u * u, w1 = 3 * u * u * t, w2 = 3 * u * t * t, w3 = t * t * t;
+    out.set(a.x * w0 + b.x * w1 + c.x * w2 + d.x * w3, a.y * w0 + b.y * w1 + c.y * w2 + d.y * w3);
+    return out;
+  }
+
+  _setHandles(h) {
+    const [a, b, c, d] = this._p;
+    a.copy(this.B);
+    b.set(this.B.x + h, this.B.y); // sai da tela em direção à borda da dobradiça
+    d.copy(this.E);
+    c.set(this.E.x - this.tE.x * h, this.E.y - this.tE.y * h);
+  }
+
+  _length() {
+    let len = 0, px = this._p[0].x, py = this._p[0].y;
+    const q = Flex._tmp;
+    for (let i = 1; i <= 14; i++) {
+      this._point(i / 14, q);
+      len += Math.hypot(q.x - px, q.y - py);
+      px = q.x;
+      py = q.y;
+    }
+    return len;
+  }
+
+  // E: ponta solta/encaixada, tE: direção em que o cabo chega nela (ambos no espaço local da tela)
+  solve(E, tE) {
+    this.E.copy(E);
+    this.tE.copy(tE).normalize();
+    // busca binária pelo tamanho das alças que dá o comprimento do cabo
+    let lo = 0.02, hi = this.L * 1.2;
+    for (let i = 0; i < 12; i++) {
+      const mid = (lo + hi) / 2;
+      this._setHandles(mid);
+      if (this._length() < this.L) lo = mid;
+      else hi = mid;
+    }
+    this._setHandles((lo + hi) / 2);
+    const q = Flex._tmp, q2 = Flex._tmp2;
+    for (let i = 0; i <= this.N; i++) {
+      const t = i / this.N;
+      this._point(t, q);
+      this._point(Math.min(1, t + 0.01), q2);
+      let tx = q2.x - q.x, ty = q2.y - q.y;
+      if (t >= 0.99) {
+        this._point(t - 0.01, q2);
+        tx = q.x - q2.x;
+        ty = q.y - q2.y;
+      }
+      const l = Math.hypot(tx, ty) || 1;
+      const nx = -ty / l, ny = tx / l;
+      for (let k = 0; k < 2; k++) {
+        const o = (i * 2 + k) * 3;
+        this.pos[o] = q.x;
+        this.pos[o + 1] = q.y;
+        this.pos[o + 2] = this.z + (k ? this.half : -this.half);
+        this.nor[o] = nx;
+        this.nor[o + 1] = ny;
+        this.nor[o + 2] = 0;
+      }
+    }
+    this.mesh.geometry.attributes.position.needsUpdate = true;
+    this.mesh.geometry.attributes.normal.needsUpdate = true;
+    this.head.position.set(this.E.x - this.tE.x * 0.2, this.E.y - this.tE.y * 0.2 + 0.0, this.z);
+    this.head.rotation.z = Math.atan2(this.tE.y, this.tE.x);
+  }
+}
+Flex._tmp = new THREE.Vector2();
+Flex._tmp2 = new THREE.Vector2();
+
 export function buildPhone() {
   const { W, L, T, R } = DIM;
   const M = {
@@ -76,8 +187,25 @@ export function buildPhone() {
     lens: new THREE.MeshPhysicalMaterial({ color: 0x05060a, metalness: 0.2, roughness: 0.05, clearcoat: 1, clearcoatRoughness: 0.02 }),
   };
 
+  // Parafuso animável: origem no topo da cabeça (onde a chave encosta), +Y aponta para fora.
+  const makeScrew = ({ r = 0.075, h = 0.05, sr = 0.03, sl = 0.2, mat = M.steel } = {}) => {
+    const g = new THREE.Group();
+    const head = mesh(new THREE.CylinderGeometry(r, r * 0.85, h, 18), mat);
+    head.position.y = -h / 2;
+    const shaft = mesh(new THREE.CylinderGeometry(sr, sr * 0.8, sl, 10), M.steel);
+    shaft.position.y = -h - sl / 2;
+    const a = mesh(new THREE.BoxGeometry(r * 1.35, 0.012, r * 0.3), M.black, { cast: false, receive: false });
+    a.position.y = 0.004;
+    const b = a.clone();
+    b.rotation.y = PI / 2;
+    g.add(head, shaft, a, b);
+    g.userData.r = r;
+    return g;
+  };
+
   const phone = new THREE.Group();
   const parts = {};
+  const anchors = {};
 
   // sombra de contato: escurece a manta rente à carcaça
   {
@@ -188,9 +316,16 @@ export function buildPhone() {
   const label = mesh(face(bw - 0.14, bl - 0.14, 0.24), std({ map: batteryTexture(), roughness: 0.42, metalness: 0.1 }), { cast: false });
   label.position.y = 0.402;
   battery.add(label);
-  const bflex = mesh(new THREE.BoxGeometry(1.0, 0.02, 0.6), M.flex, { cast: false });
-  bflex.position.set(bw / 2 + 0.3, 0.3, -3.2);
-  battery.add(bflex);
+  // flex da bateria: articulado na borda, levanta quando o conector é solto
+  const bPivot = new THREE.Group();
+  bPivot.position.set(bw / 2 - 0.05, 0.3, -3.2);
+  const bflex = mesh(new THREE.BoxGeometry(0.95, 0.02, 0.6), M.flex, { cast: false });
+  bflex.position.x = 0.475;
+  const bhead = mesh(new THREE.BoxGeometry(0.42, 0.06, 0.7), M.steelDark);
+  bhead.position.set(0.78, 0, 0);
+  bPivot.add(bflex, bhead);
+  battery.add(bPivot);
+  parts.batteryFlex = bPivot;
   body.add(battery);
   parts.battery = battery;
 
@@ -211,7 +346,6 @@ export function buildPhone() {
     [0.1, 0.165, 0.5, 0.05],
     [0.14, 0.26, 0.62, 0.075],
     [0.1, 0.44, 0.55, 0.06],
-    [0.2, 0.56, 0.5, 0.04],
     [0.15, 0.86, 0.6, 0.05],
   ];
   const shields = [];
@@ -224,11 +358,12 @@ export function buildPhone() {
     sh.position.set(cx, 0.1, cz);
     sh.userData.home = sh.position.clone();
     sh.userData.i = i;
+    sh.userData.hw = (w * bdW + 0.16) / 2;
     board.add(sh);
     shields.push(sh);
   });
   // travas de conector com seus parafusos
-  [[-0.1, -2.35, 1.2, 0.55], [0.1, 0.55, 1.1, 0.5], [-0.15, 2.9, 1.0, 0.5]].forEach(([x, z, w, l]) => {
+  [[-0.1, -2.35, 1.2, 0.55], [-0.15, 2.9, 1.0, 0.5]].forEach(([x, z, w, l]) => {
     const cover = mesh(slab(w, l, 0.06, 0.06), M.steelDark);
     cover.position.set(x, 0.3, z);
     board.add(cover);
@@ -239,18 +374,44 @@ export function buildPhone() {
   parts.board = board;
   parts.shields = shields;
 
+  // soquetes dos dois cabos da tela + tampa metálica que trava os conectores
+  const bx0 = 2.32, bz0 = -1.2; // posição da placa montada
+  const sockZ = [1.15 - 0.24, 1.15 + 0.24];
+  anchors.cableA = sockZ.map((z) => {
+    const so = mesh(new THREE.BoxGeometry(0.5, 0.05, 0.36), M.black, { cast: false });
+    so.position.set(0.3, 0.125, z);
+    board.add(so);
+    return new THREE.Vector3(bx0 + 0.3, y0 + 0.19, bz0 + z);
+  });
+  const coverPlate = mesh(slab(1.15, 1.4, 0.06, 0.06), M.steelDark);
+  coverPlate.position.set(bx0 + 0.2, y0 + 0.3, bz0 + 1.15);
+  coverPlate.userData.home = coverPlate.position.clone();
+  phone.add(coverPlate);
+  parts.coverPlate = coverPlate;
+  parts.coverScrews = [-0.57, 0.57].map((dz) => {
+    const sc = makeScrew();
+    sc.userData.seat = new THREE.Vector3(bx0 + 0.2, y0 + 0.3 + 0.06 + 0.05, bz0 + 1.15 + dz);
+    sc.position.copy(sc.userData.seat);
+    phone.add(sc);
+    return sc;
+  });
+  // parafusos que prendem a placa ao chassi
+  parts.boardScrews = [[0.72, -5.35], [0.72, 2.2], [-0.7, 5.2]].map(([x, z]) => {
+    const sc = makeScrew();
+    sc.userData.seat = new THREE.Vector3(bx0 + x, y0 + 0.1 + 0.05, bz0 + z);
+    sc.position.copy(sc.userData.seat);
+    phone.add(sc);
+    return sc;
+  });
+
   /* --- os dois parafusos pentalobe da base ----------------------- */
-  const penta = [];
-  [-0.95, 0.95].forEach((x) => {
-    const g = new THREE.Group();
-    const head = mesh(new THREE.CylinderGeometry(0.085, 0.07, 0.06, 16), M.titanium);
-    const shaft = mesh(new THREE.CylinderGeometry(0.038, 0.03, 0.3, 10), M.steel);
-    shaft.position.y = -0.17;
-    g.add(head, shaft);
-    g.position.set(x, T / 2, L / 2 - 0.02);
-    g.rotation.x = PI / 2; // deitado, cabeça para fora
-    phone.add(g);
-    penta.push(g);
+  const penta = [-0.95, 0.95].map((x) => {
+    const sc = makeScrew({ r: 0.085, h: 0.06, sr: 0.036, sl: 0.3, mat: M.titanium });
+    sc.userData.seat = new THREE.Vector3(x, T / 2, L / 2 + 0.005);
+    sc.position.copy(sc.userData.seat);
+    sc.rotation.x = PI / 2; // cabeça para fora, na base do aparelho
+    phone.add(sc);
+    return sc;
   });
   parts.penta = penta;
 
@@ -283,12 +444,18 @@ export function buildPhone() {
     bottom.position.y = -0.002;
     g.add(bottom);
     g.position.y = T - dT - 0.015;
-    g.userData = { screen, glassMat };
+    const flexMats = [M.flex, M.kapton].map((m) => {
+      const c = m.clone();
+      c.side = THREE.DoubleSide;
+      return c;
+    });
+    const cables = anchors.cableA.map((A, i) => new Flex(g, { z: A.z, material: flexMats[i], headMat: M.steelDark, pinMat: M.gold }));
+    g.userData = { screen, glassMat, cables };
     return g;
   };
   parts.display = makeDisplay(true);
   parts.newDisplay = makeDisplay(false);
   phone.add(parts.display, parts.newDisplay);
 
-  return { phone, parts, materials: M };
+  return { phone, parts, anchors, materials: M };
 }

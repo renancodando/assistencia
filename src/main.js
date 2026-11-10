@@ -16,7 +16,8 @@ import {
   ToneMappingMode,
   BlendFunction,
 } from 'postprocessing';
-import { buildPhone, DIM } from './phone.js';
+import { buildPhone } from './phone.js';
+import { createChoreo } from './choreo.js';
 import { buildBench, buildEnvironment, buildLights } from './bench.js';
 import { initUI } from './ui.js';
 
@@ -29,62 +30,37 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 /* Roteiro: o que cada peça faz em cada capítulo da página             */
 /* pose = [x, y, z, rx, ry, rz]                                        */
 /* ------------------------------------------------------------------ */
-const dispY = DIM.T - 0.16 - 0.015;
-const HOME = {
-  display: [0, dispY, 0, 0, 0, 0],
-  battery: [-0.78, 0.16, 0.55, 0, 0, 0],
-  board: [2.32, 0.16, -1.2, 0, 0, 0],
-};
-const parked = [11.6, 0.0, 1.6, 0, -0.12, 0]; // tela antiga fica de lado, fora da área do texto
-const SCRIPT = {
-  //           0 chegou        1 tela                      2 bateria   3 placa   4 peças               5 pronto
-  display: [HOME.display, [-4.9, 4.9, -0.6, 0, 0.1, -0.95], parked, parked, [-8.0, 0, 0, 0, 0, 0], parked],
-  newDisplay: [
-    [0, 46, 0, 0, 0, 0.3],
-    [0, 46, 0, 0, 0, 0.3],
-    [0, 46, 0, 0, 0, 0.3],
-    [0, 46, 0, 0, 0, 0.3],
-    [0, 46, 0, 0, 0, 0.3],
-    HOME.display,
-  ],
-  battery: [HOME.battery, HOME.battery, [-0.4, 3.5, 0.55, -0.1, 0, 0.13], HOME.battery, [6.25, 0, 0, 0, 0, 0], HOME.battery],
-  board: [HOME.board, HOME.board, HOME.board, HOME.board, [9.7, 0, 0, 0, 0, 0], HOME.board],
-  shields: [0, 0, 0, 1, 0, 0],
-  penta: [0, 1, 1, 1, 1, 0],
-  iron: [0, 0, 0, 1, 0, 0],
-  boot: [0, 0, 0, 0, 0, 1],
-  cam: [
-    { p: [8, 30, 25], t: [0, 0.4, 0.3], blur: 2.2 },
-    { p: [13, 17, 25], t: [-1.6, 2.2, 0], blur: 3.0 },
-    { p: [13, 27, 25], t: [2.6, 1.2, 0.6], blur: 2.4 },
-    { p: [8.2, 7.4, 5.2], t: [2.25, 0.45, -1.7], blur: 5.5 },
-    { p: [-0.4, 74, 9], t: [-0.4, 0, 0.4], blur: 0.5 },
-    { p: [2.5, 40, 18], t: [2.2, 0.4, 0.4], blur: 1.8 },
-  ],
-};
-const LAST = SCRIPT.cam.length - 1;
+// Trilha da câmera: ela acompanha a ação (parafusos, conectores, solda) em close
+// e abre de novo no repouso de cada capítulo (f inteiro).
+const CAM = [
+  { f: 0.0, p: [8, 30, 25], t: [0, 0.4, 0.3], blur: 2.2 },
+  { f: 0.3, p: [11, 7.5, 17.5], t: [0.6, 0.7, 9.2], blur: 4.2 }, // chave nos pentalobe
+  { f: 0.56, p: [-10, 13, 19], t: [-1.2, 0.8, 1.5], blur: 3.0 }, // palheta na lateral
+  { f: 1.0, p: [-15, 15, 22], t: [1.4, 2.6, -0.4], blur: 2.6 }, // tela aberta
+  { f: 1.24, p: [-7.5, 9.5, 9.5], t: [2.5, 0.9, 0.1], blur: 4.4 }, // tampa dos conectores
+  { f: 1.48, p: [-6.2, 6.2, 7.4], t: [2.9, 1.0, -0.1], blur: 5.0 }, // cabos desencaixando
+  { f: 1.74, p: [10, 25, 24], t: [2.6, 1.6, 0.5], blur: 2.4 },
+  { f: 2.0, p: [13, 27, 25], t: [2.6, 1.2, 0.6], blur: 2.4 }, // bateria
+  { f: 2.62, p: [8.8, 8.6, 6.2], t: [2.3, 0.6, -1.5], blur: 5.0 }, // blindagens
+  { f: 3.0, p: [8.2, 7.4, 5.2], t: [2.25, 0.45, -1.7], blur: 5.5 }, // microssoldagem
+  { f: 3.38, p: [10, 14, 13], t: [2.7, 0.5, -0.6], blur: 3.6 }, // parafusos da placa
+  { f: 4.0, p: [-1.9, 74, 9], t: [-1.9, 0, 0.4], blur: 0.5 }, // peças na manta
+  { f: 4.34, p: [7, 30, 23], t: [1.6, 0.5, 0], blur: 2.2 },
+  { f: 4.63, p: [-6.5, 7.5, 8.5], t: [2.9, 1.0, -0.1], blur: 4.6 }, // cabos da tela nova
+  { f: 4.86, p: [-6, 22, 24], t: [1.2, 1.2, 0.6], blur: 2.4 }, // fechando
+  { f: 5.0, p: [2.5, 40, 18], t: [2.2, 0.4, 0.4], blur: 1.8 }, // pronto
+];
+const LAST_CHAPTER = 5;
 
 const ease = (t) => t * t * t * (t * (t * 6 - 15) + 10);
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 
-function split(f) {
-  const i = Math.min(LAST - 1, Math.max(0, Math.floor(f)));
-  const t = ease(clamp01((f - i - 0.14) / 0.72));
-  return [i, t];
-}
-const qa = new THREE.Quaternion(), qb = new THREE.Quaternion(), ea = new THREE.Euler();
-function applyPose(obj, keys, f) {
-  const [i, t] = split(f);
-  const a = keys[i], b = keys[i + 1];
-  obj.position.set(lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t));
-  qa.setFromEuler(ea.set(a[3], a[4], a[5]));
-  qb.setFromEuler(ea.set(b[3], b[4], b[5]));
-  obj.quaternion.slerpQuaternions(qa, qb, t);
-}
-function scalar(keys, f) {
-  const [i, t] = split(f);
-  return lerp(keys[i], keys[i + 1], t);
+function camSegment(f) {
+  let i = 0;
+  while (i < CAM.length - 2 && f >= CAM[i + 1].f) i++;
+  const a = CAM[i], b = CAM[i + 1];
+  return [a, b, ease(clamp01((f - a.f) / (b.f - a.f)))];
 }
 
 /* ------------------------------------------------------------------ */
@@ -119,13 +95,9 @@ async function start() {
   const camera = new THREE.PerspectiveCamera(24, 1, 1, 300);
   const { lamp } = buildLights(scene);
   const props = buildBench(scene, { textureSize: small ? 2048 : 4096 });
-  const { phone, parts } = buildPhone();
+  const { phone, parts, anchors } = buildPhone();
   scene.add(phone);
-
-  // ferro de solda: estacionado na manta ou encostado na placa
-  const up = new THREE.Vector3(0, 1, 0);
-  const ironRest = { p: new THREE.Vector3(24, 0.5, -3), q: new THREE.Quaternion().setFromUnitVectors(up, new THREE.Vector3(0.25, 0.02, 1).normalize()) };
-  const ironWork = { p: new THREE.Vector3(2.02, 0.42, -1.75), q: new THREE.Quaternion().setFromUnitVectors(up, new THREE.Vector3(0.5, 0.62, -0.6).normalize()) };
+  const choreo = createChoreo({ parts, props, anchors });
 
   /* --- pós-processamento ---------------------------------------- */
   const composer = new EffectComposer(renderer, { frameBufferType: THREE.HalfFloatType, multisampling: 0 });
@@ -196,42 +168,10 @@ async function start() {
     const f = chapter;
     ui.setChapter(f);
 
-    // peças
-    applyPose(parts.display, SCRIPT.display, f);
-    applyPose(parts.newDisplay, SCRIPT.newDisplay, f);
-    parts.newDisplay.visible = parts.newDisplay.position.y < 40;
-    applyPose(parts.battery, SCRIPT.battery, f);
-    applyPose(parts.board, SCRIPT.board, f);
-
-    const sh = scalar(SCRIPT.shields, f);
-    parts.shields.forEach((s) => {
-      const k = clamp01(sh * 1.6 - s.userData.i * 0.1);
-      s.position.copy(s.userData.home);
-      s.position.y += k * (0.9 + s.userData.i * 0.22);
-      s.position.x += k * (0.25 + (s.userData.i % 2) * 0.5);
-      s.rotation.z = -k * 0.22;
-    });
-
-    const pe = scalar(SCRIPT.penta, f);
-    parts.penta.forEach((s, i) => {
-      const hx = i ? 0.95 : -0.95;
-      const out = clamp01(pe * 2.2), fly = clamp01(pe * 2.2 - 1.2);
-      s.position.set(lerp(hx, 6.3 + i * 0.9, fly), lerp(DIM.T / 2, 0.075, fly) + Math.sin(fly * PI) * 2.2, lerp(DIM.L / 2 - 0.02 + out * 0.5, 10.5 + i * 0.4, fly));
-      s.rotation.set(PI / 2, 0, out * 14 + fly * (1 + i));
-    });
-
-    const ir = scalar(SCRIPT.iron, f);
-    props.iron.position.lerpVectors(ironRest.p, ironWork.p, ir);
-    props.iron.position.y += Math.sin(ir * PI) * 7;
-    props.iron.quaternion.slerpQuaternions(ironRest.q, ironWork.q, ir);
-    props.ironGlow.intensity = ir > 0.9 ? (8 + Math.sin(t * 30) * 2) * (ir - 0.9) * 10 : 0;
-
-    // telas
+    // peças, ferramentas e cabos
+    choreo.update(f, t);
     parts.display.userData.screen.draw(false, t);
     parts.newDisplay.userData.screen.draw(false, t);
-    const boot = clamp01(scalar(SCRIPT.boot, f) * 4 - 3);
-    parts.newDisplay.userData.glassMat.emissiveIntensity = boot * 1.05;
-    parts.display.userData.glassMat.emissiveIntensity = 1.0 + (Math.sin(t * 23) > 0.96 ? -0.35 : 0);
 
     // luminária
     mouse.lerp(mouseT, 1 - Math.exp(-dt * 3));
@@ -243,8 +183,7 @@ async function start() {
     lamp.target.position.set(mouse.x * 2, 0, mouse.y * 2);
 
     // câmera
-    const [i, k] = split(f);
-    const a = SCRIPT.cam[i], b = SCRIPT.cam[i + 1];
+    const [a, b, k] = camSegment(f);
     camPos.set(lerp(a.p[0], b.p[0], k), lerp(a.p[1], b.p[1], k), lerp(a.p[2], b.p[2], k));
     camTgt.set(lerp(a.t[0], b.t[0], k), lerp(a.t[1], b.t[1], k), lerp(a.t[2], b.t[2], k));
     const aspect = W / H;
